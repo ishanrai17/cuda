@@ -1,5 +1,10 @@
 // Build: nvcc -O2 test_matmul.cu matmul_gpu.cu -o test_matmul
 // Run:   ./test_matmul
+//
+// Shape is overridable at build time, e.g. to get the old memory-bound
+// outer-product case back:
+//   nvcc -O2 -DMATMUL_M=8192 -DMATMUL_K=1 -DMATMUL_N=8192 \
+//        test_matmul.cu matmul_gpu.cu -o test_matmul
 
 #include <chrono>
 #include <cmath>
@@ -9,32 +14,35 @@
 #include "matmul_cpu.h"
 #include "matmul_gpu.cuh"
 
-float** alloc_matrix() {
-    float** m = new float*[N];
-    for (int i = 0; i < N; ++i) {
-        m[i] = new float[N];
+float** alloc_matrix(int rows, int cols) {
+    float** m = new float*[rows];
+    for (int i = 0; i < rows; ++i) {
+        m[i] = new float[cols];
     }
     return m;
 }
 
-void free_matrix(float** m) {
-    for (int i = 0; i < N; ++i) {
+void free_matrix(float** m, int rows) {
+    for (int i = 0; i < rows; ++i) {
         delete[] m[i];
     }
     delete[] m;
 }
 
 int main() {
-    // N is large enough now that stack arrays here would overflow, so heap-allocate.
-    float* a = new float[N];
-    float* b = new float[N];
-    float** c_cpu = alloc_matrix();
-    float** c_gpu = alloc_matrix();
+    // These are large enough that stack arrays would overflow, so heap-allocate.
+    // a and b are flat row-major; only the outputs use row pointers.
+    float* a = new float[static_cast<size_t>(M) * K];
+    float* b = new float[static_cast<size_t>(K) * N];
+    float** c_cpu = alloc_matrix(M, N);
+    float** c_gpu = alloc_matrix(M, N);
 
     std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-    for (int i = 0; i < N; ++i) {
+    for (size_t i = 0; i < static_cast<size_t>(M) * K; ++i) {
         a[i] = dist(rng);
+    }
+    for (size_t i = 0; i < static_cast<size_t>(K) * N; ++i) {
         b[i] = dist(rng);
     }
 
@@ -60,9 +68,12 @@ int main() {
     CUDA_CHECK(cudaEventDestroy(gpu_stop));
 
     // CPU and GPU should agree everywhere; count anything that doesn't.
+    // CPU and GPU sum the K products in the same order but the GPU may contract
+    // multiply-add pairs into FMAs, so tolerance has to grow with K rather than
+    // stay at the single-multiply epsilon the outer-product version used.
     int mismatches = 0;
-    const float epsilon = 1e-4f;
-    for (int i = 0; i < N; ++i) {
+    const float epsilon = 1e-4f * K;
+    for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
             if (std::fabs(c_cpu[i][j] - c_gpu[i][j]) > epsilon) {
                 ++mismatches;
@@ -70,16 +81,21 @@ int main() {
         }
     }
 
-    std::printf("Matmul: (%d, 1) @ (1, %d) -> (%d, %d)\n\n", N, N, N, N);
-    std::printf("CPU: %.4f ms\n", cpu_ms);
-    std::printf("GPU: %.4f ms\n", static_cast<double>(gpu_ms));
-    std::printf("\nMismatches: %d / %d\n", mismatches, N * N);
+    // 2 FLOP per multiply-add, M*N*K of them.
+    double gflop = 2.0 * M * N * K / 1e9;
+
+    std::printf("Matmul: (%d, %d) @ (%d, %d) -> (%d, %d)\n", M, K, K, N, M, N);
+    std::printf("%.2f GFLOP of work\n\n", gflop);
+    std::printf("CPU: %.4f ms  (%.1f GFLOP/s)\n", cpu_ms, gflop / (cpu_ms / 1e3));
+    std::printf("GPU: %.4f ms  (%.1f GFLOP/s)\n", static_cast<double>(gpu_ms),
+                gflop / (gpu_ms / 1e3));
+    std::printf("\nMismatches: %d / %d\n", mismatches, M * N);
     std::printf("Speedup (CPU / GPU): %.2fx\n", cpu_ms / gpu_ms);
 
     delete[] a;
     delete[] b;
-    free_matrix(c_cpu);
-    free_matrix(c_gpu);
+    free_matrix(c_cpu, M);
+    free_matrix(c_gpu, M);
 
     return mismatches == 0 ? 0 : 1;
 }
