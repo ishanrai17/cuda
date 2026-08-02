@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <cuda_runtime.h>
 
-#include "matmul_cpu.h"  // brings in N and Matrix so both sides agree on shape
+#include "matmul_cpu.h"  // brings in N so both sides agree on shape
 
 #define CUDA_CHECK(call)                                                      \
     do {                                                                      \
@@ -16,8 +16,10 @@
         }                                                                      \
     } while (0)
 
-__global__ void matmul_gpu_kernel(const float* a, const float* b, Matrix c);
+__global__ void matmul_gpu_kernel(const float* a, const float* b, float* c);
 
 // Same outer product as matmul_cpu, but on the GPU. Takes care of the
 // device malloc/copy/launch/free dance so callers just pass host pointers.
-void matmul_gpu(const float h_a[N], const float h_b[N], Matrix h_c);
+// h_c is a host float** (array of row pointers); the device itself works
+// on a flat buffer since it can't dereference host row pointers.
+void matmul_gpu(const float* h_a, const float* h_b, float** h_c);

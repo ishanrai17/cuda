@@ -1,19 +1,18 @@
 #include "matmul_gpu.cuh"
 
-__global__ void matmul_gpu_kernel(const float* a, const float* b, Matrix c) {
+__global__ void matmul_gpu_kernel(const float* a, const float* b, float* c) {
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int i = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (i < N && j < N) {
-        c[i][j] = a[i] * b[j];
+        c[i * N + j] = a[i] * b[j];
     }
 }
 
-void matmul_gpu(const float h_a[N], const float h_b[N], Matrix h_c) {
-    float *d_a, *d_b;
-    Matrix* d_c;
+void matmul_gpu(const float* h_a, const float* h_b, float** h_c) {
+    float *d_a, *d_b, *d_c;
     size_t vec_bytes = static_cast<size_t>(N) * sizeof(float);
-    size_t mat_bytes = sizeof(Matrix);
+    size_t mat_bytes = static_cast<size_t>(N) * N * sizeof(float);
 
     CUDA_CHECK(cudaMalloc(&d_a, vec_bytes));
     CUDA_CHECK(cudaMalloc(&d_b, vec_bytes));
@@ -24,10 +23,13 @@ void matmul_gpu(const float h_a[N], const float h_b[N], Matrix h_c) {
 
     dim3 block(16, 16);
     dim3 grid((N + block.x - 1) / block.x, (N + block.y - 1) / block.y);
-    matmul_gpu_kernel<<<grid, block>>>(d_a, d_b, *d_c);
+    matmul_gpu_kernel<<<grid, block>>>(d_a, d_b, d_c);
     CUDA_CHECK(cudaGetLastError());
 
-    CUDA_CHECK(cudaMemcpy(h_c, d_c, mat_bytes, cudaMemcpyDeviceToHost));
+    // Pull the flat result back one row at a time into the caller's row pointers.
+    for (int i = 0; i < N; ++i) {
+        CUDA_CHECK(cudaMemcpy(h_c[i], d_c + i * N, vec_bytes, cudaMemcpyDeviceToHost));
+    }
 
     CUDA_CHECK(cudaFree(d_a));
     CUDA_CHECK(cudaFree(d_b));

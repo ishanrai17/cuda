@@ -4,19 +4,30 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <memory>
 #include <random>
 
 #include "matmul_cpu.h"
 #include "matmul_gpu.cuh"
 
+float** alloc_matrix() {
+    float** m = new float*[N];
+    for (int i = 0; i < N; ++i) {
+        m[i] = new float[N];
+    }
+    return m;
+}
+
+void free_matrix(float** m) {
+    for (int i = 0; i < N; ++i) {
+        delete[] m[i];
+    }
+    delete[] m;
+}
+
 int main() {
     float a[N], b[N];
-
-    // These are ~4 MB each at N=1024, way too big for the stack.
-    // (make_unique doesn't support multidimensional array types, so `new` it directly.)
-    std::unique_ptr<Matrix> c_cpu(new Matrix);
-    std::unique_ptr<Matrix> c_gpu(new Matrix);
+    float** c_cpu = alloc_matrix();
+    float** c_gpu = alloc_matrix();
 
     std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
@@ -26,7 +37,7 @@ int main() {
     }
 
     auto cpu_start = std::chrono::high_resolution_clock::now();
-    matmul_cpu(a, b, *c_cpu);
+    matmul_cpu(a, b, c_cpu);
     auto cpu_end = std::chrono::high_resolution_clock::now();
     double cpu_ms = std::chrono::duration<double, std::milli>(cpu_end - cpu_start).count();
 
@@ -37,7 +48,7 @@ int main() {
     CUDA_CHECK(cudaEventCreate(&gpu_stop));
 
     CUDA_CHECK(cudaEventRecord(gpu_start));
-    matmul_gpu(a, b, *c_gpu);
+    matmul_gpu(a, b, c_gpu);
     CUDA_CHECK(cudaEventRecord(gpu_stop));
     CUDA_CHECK(cudaEventSynchronize(gpu_stop));
 
@@ -51,7 +62,7 @@ int main() {
     const float epsilon = 1e-4f;
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
-            if (std::fabs((*c_cpu)[i][j] - (*c_gpu)[i][j]) > epsilon) {
+            if (std::fabs(c_cpu[i][j] - c_gpu[i][j]) > epsilon) {
                 ++mismatches;
             }
         }
@@ -62,6 +73,9 @@ int main() {
     std::printf("GPU: %.4f ms\n", static_cast<double>(gpu_ms));
     std::printf("\nMismatches: %d / %d\n", mismatches, N * N);
     std::printf("Speedup (CPU / GPU): %.2fx\n", cpu_ms / gpu_ms);
+
+    free_matrix(c_cpu);
+    free_matrix(c_gpu);
 
     return mismatches == 0 ? 0 : 1;
 }
