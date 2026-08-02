@@ -25,7 +25,9 @@ void free_matrix(float** m) {
 }
 
 int main() {
-    float a[N], b[N];
+    // N is large enough now that stack arrays here would overflow, so heap-allocate.
+    float* a = new float[N];
+    float* b = new float[N];
     float** c_cpu = alloc_matrix();
     float** c_gpu = alloc_matrix();
 
@@ -74,6 +76,8 @@ int main() {
     std::printf("\nMismatches: %d / %d\n", mismatches, N * N);
     std::printf("Speedup (CPU / GPU): %.2fx\n", cpu_ms / gpu_ms);
 
+    delete[] a;
+    delete[] b;
     free_matrix(c_cpu);
     free_matrix(c_gpu);
 
