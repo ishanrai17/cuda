@@ -14,8 +14,9 @@ int main() {
     float a[N], b[N];
 
     // These are ~4 MB each at N=1024, way too big for the stack.
-    auto c_cpu = std::make_unique<Matrix>();
-    auto c_gpu = std::make_unique<Matrix>();
+    // (make_unique doesn't support multidimensional array types, so `new` it directly.)
+    std::unique_ptr<Matrix> c_cpu(new Matrix);
+    std::unique_ptr<Matrix> c_gpu(new Matrix);
 
     std::mt19937 rng(42);
     std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
